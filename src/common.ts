@@ -81,7 +81,7 @@ export interface getTokenParameters {
 export interface DecodedToken {
 	validated:boolean;
 	header: string;
-	claims: any;
+	claims: TokenClaims;
 	JWSSig: string;
 }
 
@@ -120,9 +120,9 @@ export abstract class AuthorizationContext {
         }
 
         var tokenPayload: string = matches[2];
-        var claims:any = JSON.parse(this.base64DecodeStringUrlSafe(tokenPayload))
+        var claims:TokenClaims = JSON.parse(this.base64DecodeStringUrlSafe(tokenPayload))
 
-        var crackedToken = {
+        var crackedToken :DecodedToken = {
         	validated: false, //we're not doing signature validation...hence the token is not validated
             header: matches[1],
             claims: claims,
@@ -221,6 +221,15 @@ export abstract class AuthorizationContext {
 			storage.addPassword(service, account, password);
 		}
 	}
+
+	isTokenExpiring(token: DecodedToken): boolean{
+		var expiresDateTimeUTC:number = token.claims.exp;
+		var now: number = 1000;//(new Date()).UTC;
+		var expiringWindow: number = 300; //5 minutes
+		var timeRemaining: number = (expiresDateTimeUTC - now);
+
+		return (timeRemaining > expiringWindow);
+	}
 }
 
 export interface AADAuthorizationContextConfig extends AuthorizationContextConfig {
@@ -250,13 +259,18 @@ export class AADAuthorizationContext extends AuthorizationContext {
 	getToken(parameters:getTokenParameters):Promise<any>{
 		return new Promise(function(resolve, reject){
 			var account:string = this.getAccountName(CONTSTANTS.ACCESS_TOKEN, parameters.resourceId);
-			var accessToken:string = this.getTokenFromSecureStorage(this._config.appName, account);
-
-			
+			var accessToken:DecodedToken = this.getTokenFromSecureStorage(this._config.appName, account);
 
 			if(accessToken){
-				resolve(accessToken);
+				if(this.isTokenExpiring(accessToken)){
+					//Need to renew the access Token and/or interactively request authorization
+
+				}else{
+					//Access Token Still Good (As far as we know)
+					resolve(accessToken);
+				}
 			}else{
+				//Need to interactively request authorization
 
 			}
 		});

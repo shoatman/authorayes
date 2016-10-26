@@ -116,6 +116,13 @@
                 storage.addPassword(service, account, password);
             }
         }
+        isTokenExpiring(token) {
+            var expiresDateTimeUTC = token.claims.exp;
+            var now = 1000;
+            var expiringWindow = 300;
+            var timeRemaining = (expiresDateTimeUTC - now);
+            return (timeRemaining > expiringWindow);
+        }
     }
     exports.AuthorizationContext = AuthorizationContext;
     exports.CONTSTANTS = {
@@ -134,8 +141,12 @@
             return new Promise(function (resolve, reject) {
                 var account = this.getAccountName(exports.CONTSTANTS.ACCESS_TOKEN, parameters.resourceId);
                 var accessToken = this.getTokenFromSecureStorage(this._config.appName, account);
-                if (token) {
-                    resolve(token);
+                if (accessToken) {
+                    if (this.isTokenExpiring(accessToken)) {
+                    }
+                    else {
+                        resolve(accessToken);
+                    }
                 }
                 else {
                 }
