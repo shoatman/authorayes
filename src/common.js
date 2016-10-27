@@ -22,7 +22,8 @@
     }
     exports.redeemAuthorizationCommand = redeemAuthorizationCommand;
     class AuthorizationContext {
-        constructor() {
+        constructor(config) {
+            this._baseConfig = config;
         }
         decodeJWT(jwt) {
             if (this.isEmpty(jwt)) {
@@ -123,6 +124,56 @@
             var timeRemaining = (expiresDateTimeUTC - now);
             return (timeRemaining > expiringWindow);
         }
+        getResourceStorageAccountNames(resourceId) {
+            var names = {
+                accessTokenAccount: this.getAccountName(exports.CONTSTANTS.ACCESS_TOKEN, resourceId),
+                refreshTokenAccount: this.getAccountName(exports.CONTSTANTS.REFRESH_TOKEN, resourceId)
+            };
+            return names;
+        }
+        generateGuid() {
+            if (this._baseConfig.crypto && this._baseConfig.crypto.getRandomValues) {
+                var buffer = new Uint8Array(16);
+                this._baseConfig.crypto.getRandomValues(buffer);
+                buffer[6] |= 0x40;
+                buffer[6] &= 0x4f;
+                buffer[8] |= 0x80;
+                buffer[8] &= 0xbf;
+                return this.decimalToHex(buffer[0]) + this.decimalToHex(buffer[1]) + this.decimalToHex(buffer[2]) + this.decimalToHex(buffer[3]) + '-' + this.decimalToHex(buffer[4]) + this.decimalToHex(buffer[5]) + '-' + this.decimalToHex(buffer[6]) + this.decimalToHex(buffer[7]) + '-' +
+                    this.decimalToHex(buffer[8]) + this.decimalToHex(buffer[9]) + '-' + this.decimalToHex(buffer[10]) + this.decimalToHex(buffer[11]) + this.decimalToHex(buffer[12]) + this.decimalToHex(buffer[13]) + this.decimalToHex(buffer[14]) + this.decimalToHex(buffer[15]);
+            }
+            else {
+                var guidHolder = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+                var hex = '0123456789abcdef';
+                var r = 0;
+                var guidResponse = "";
+                for (var i = 0; i < 36; i++) {
+                    if (guidHolder[i] !== '-' && guidHolder[i] !== '4') {
+                        r = Math.random() * 16 | 0;
+                    }
+                    if (guidHolder[i] === 'x') {
+                        guidResponse += hex[r];
+                    }
+                    else if (guidHolder[i] === 'y') {
+                        r &= 0x3;
+                        r |= 0x8;
+                        guidResponse += hex[r];
+                    }
+                    else {
+                        guidResponse += guidHolder[i];
+                    }
+                }
+                return guidResponse;
+            }
+        }
+        ;
+        decimalToHex(number) {
+            var hex = number.toString(16);
+            while (hex.length < 2) {
+                hex = '0' + hex;
+            }
+            return hex;
+        }
     }
     exports.AuthorizationContext = AuthorizationContext;
     exports.CONTSTANTS = {
@@ -133,28 +184,61 @@
     };
     class AADAuthorizationContext extends AuthorizationContext {
         constructor(config) {
-            super();
+            super(config);
             this._authority = 'https://login.microsoftonline.com/';
             this._config = config;
         }
         getToken(parameters) {
             return new Promise(function (resolve, reject) {
-                var account = this.getAccountName(exports.CONTSTANTS.ACCESS_TOKEN, parameters.resourceId);
-                var accessToken = this.getTokenFromSecureStorage(this._config.appName, account);
+                var tokenNames = this.getResourceStorageAccountNames(parameters.resourceId);
+                var accessToken = this.getTokenFromSecureStorage(this._config.appName, tokenNames.accessTokenAccount);
+                var token = this.decodeJWT(accessToken);
                 if (accessToken) {
-                    if (this.isTokenExpiring(accessToken)) {
+                    if (this.isTokenExpiring(token)) {
+                        var refreshToken = this.getTokenFromSecureStorage(this._config.appName, tokenNames.refreshTokenAccount);
+                        if (refreshToken) {
+                            this.renewToken(refreshToken).then(function (result) {
+                                resolve(result);
+                            }).catch(function (err) {
+                                this.requestAuthorization(parameters.resourceId).then(function (result) {
+                                    this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
+                                    this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+                                    resolve(result.accessToken);
+                                }).catch(function (err) { reject(null); });
+                            });
+                        }
+                        else {
+                            this.requestAuthorization(parameters.resourceId).then(function (result) {
+                                this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
+                                this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+                                resolve(result.accessToken);
+                            }).catch(function (err) { reject(null); });
+                        }
                     }
                     else {
                         resolve(accessToken);
                     }
                 }
                 else {
+                    this.requestAuthorization(parameters.resourceId).then(function (result) {
+                        this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
+                        this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+                        resolve(result.accessToken);
+                    }).catch(function (err) { reject(null); });
                 }
             });
         }
-        requestAuthorization() {
+        setAuthorizationResult(result) {
+        }
+        renewToken(refreshToken) {
+            this._state = this.generateGuid();
             return new Promise(function (resolve, reject) {
-                var url;
+            });
+        }
+        requestAuthorization(resourceId) {
+            this._state = this.generateGuid();
+            return new Promise(function (resolve, reject) {
+                var url = this.getAuthorizationRequestUrl(resourceId);
                 var config = {};
                 config.height = 100;
                 config.width = 100;
@@ -167,14 +251,46 @@
                 });
             });
         }
-        getAuthorizationRequestUrl() {
-            var url;
-            return url;
+        getAuthorizationRequestUrl(resourceId) {
+            var tenant = 'common';
+            if (this._config.tenantId) {
+                tenant = this._config.tenantId;
+            }
+            var urlNavigate = this._authority + tenant + '/oauth2/authorize' + this.serializeAuthRequest("code", this._config, resourceId);
+            return urlNavigate;
         }
         getTokenRequestUrl() {
             var url;
             return url;
         }
+        serializeAuthRequest(responseType, obj, resource) {
+            var str = [];
+            if (obj !== null) {
+                str.push('?response_type=' + responseType);
+                str.push('client_id=' + encodeURIComponent(obj.clientId));
+                if (resource) {
+                    str.push('resource=' + encodeURIComponent(resource));
+                }
+                str.push('redirect_uri=' + encodeURIComponent(obj.redirectUri));
+                str.push('state=' + encodeURIComponent(this._state));
+            }
+            return str.join('&');
+        }
+        ;
+        serializeTokenRequest(responseType, obj, resource) {
+            var str = [];
+            if (obj !== null) {
+                str.push('?response_type=' + responseType);
+                str.push('client_id=' + encodeURIComponent(obj.clientId));
+                if (resource) {
+                    str.push('resource=' + encodeURIComponent(resource));
+                }
+                str.push('redirect_uri=' + encodeURIComponent(obj.redirectUri));
+                str.push('state=' + encodeURIComponent(this._state));
+            }
+            return str.join('&');
+        }
+        ;
     }
     exports.AADAuthorizationContext = AADAuthorizationContext;
 });
