@@ -21,7 +21,13 @@
     class redeemAuthorizationCommand {
     }
     exports.redeemAuthorizationCommand = redeemAuthorizationCommand;
-    class AuthorizationContext {
+    exports.CONTSTANTS = {
+        ACCESS_TOKEN: 'access_token',
+        EXPIRES_IN: 'expires_in',
+        ID_TOKEN: 'id_token',
+        AUTHORIZATION_CODE: 'code'
+    };
+    class TokenBroker {
         constructor(config) {
             this._baseConfig = config;
         }
@@ -131,6 +137,67 @@
             };
             return names;
         }
+        getToken(parameters) {
+            return new Promise(function (resolve, reject) {
+                var tokenNames = this.getResourceStorageAccountNames(parameters.resourceId);
+                var accessToken = this.getTokenFromSecureStorage(this._config.appName, tokenNames.accessTokenAccount);
+                var token = this.decodeJWT(accessToken);
+                if (accessToken) {
+                    if (this.isTokenExpiring(token)) {
+                        var refreshToken = this.getTokenFromSecureStorage(this._config.appName, tokenNames.refreshTokenAccount);
+                        if (refreshToken) {
+                            this.renewToken(refreshToken).then(function (result) {
+                                resolve(result);
+                            }).catch(function (err) {
+                                this.requestAuthorization(parameters.resourceId).then(function (result) {
+                                    this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
+                                    this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+                                    resolve(result.accessToken);
+                                }).catch(function (err) { reject(null); });
+                            });
+                        }
+                        else {
+                            this.requestAuthorization(parameters.resourceId).then(function (result) {
+                                this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
+                                this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+                                resolve(result.accessToken);
+                            }).catch(function (err) { reject(null); });
+                        }
+                    }
+                    else {
+                        resolve(accessToken);
+                    }
+                }
+                else {
+                    this.requestAuthorization(parameters.resourceId).then(function (result) {
+                        this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
+                        this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+                        resolve(result.accessToken);
+                    }).catch(function (err) { reject(null); });
+                }
+            });
+        }
+        requestAuthorization(resourceId) {
+            this._state = this.generateGuid();
+            return new Promise(function (resolve, reject) {
+                var url = this.getAuthorizationRequestUrl(resourceId);
+                var config = {};
+                config.height = 100;
+                config.width = 100;
+                config.showDeveloperTools = true;
+                this._config.interactiveAuthorizationCommand.execute(url, config).then(function (result) {
+                    var token;
+                    resolve(token);
+                }).catch(function (err) {
+                    reject(err);
+                });
+            });
+        }
+        renewToken(refreshToken) {
+            this._state = this.generateGuid();
+            return new Promise(function (resolve, reject) {
+            });
+        }
         generateGuid() {
             if (this._baseConfig.crypto && this._baseConfig.crypto.getRandomValues) {
                 var buffer = new Uint8Array(16);
@@ -175,81 +242,34 @@
             return hex;
         }
     }
-    exports.AuthorizationContext = AuthorizationContext;
-    exports.CONTSTANTS = {
-        ACCESS_TOKEN: 'access_token',
-        EXPIRES_IN: 'expires_in',
-        ID_TOKEN: 'id_token',
-        AUTHORIZATION_CODE: 'code'
-    };
-    class AADAuthorizationContext extends AuthorizationContext {
+    exports.TokenBroker = TokenBroker;
+    class AADTokenBroker extends TokenBroker {
         constructor(config) {
             super(config);
             this._authority = 'https://login.microsoftonline.com/';
             this._config = config;
         }
-        getToken(parameters) {
-            return new Promise(function (resolve, reject) {
-                var tokenNames = this.getResourceStorageAccountNames(parameters.resourceId);
-                var accessToken = this.getTokenFromSecureStorage(this._config.appName, tokenNames.accessTokenAccount);
-                var token = this.decodeJWT(accessToken);
-                if (accessToken) {
-                    if (this.isTokenExpiring(token)) {
-                        var refreshToken = this.getTokenFromSecureStorage(this._config.appName, tokenNames.refreshTokenAccount);
-                        if (refreshToken) {
-                            this.renewToken(refreshToken).then(function (result) {
-                                resolve(result);
-                            }).catch(function (err) {
-                                this.requestAuthorization(parameters.resourceId).then(function (result) {
-                                    this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
-                                    this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
-                                    resolve(result.accessToken);
-                                }).catch(function (err) { reject(null); });
-                            });
-                        }
-                        else {
-                            this.requestAuthorization(parameters.resourceId).then(function (result) {
-                                this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
-                                this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
-                                resolve(result.accessToken);
-                            }).catch(function (err) { reject(null); });
-                        }
-                    }
-                    else {
-                        resolve(accessToken);
-                    }
-                }
-                else {
-                    this.requestAuthorization(parameters.resourceId).then(function (result) {
-                        this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
-                        this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
-                        resolve(result.accessToken);
-                    }).catch(function (err) { reject(null); });
-                }
-            });
+        getAuthorizationRequestConfig(config) {
+            var requestConfig = {
+                url: "",
+                headers: {}
+            };
+            requestConfig.url = this.getAuthorizationRequestUrl(config.tokenParameters.resourceId);
+            return requestConfig;
         }
-        setAuthorizationResult(result) {
+        getRefreshTokenRequestConfig(config) {
+            var requestConfig = {
+                url: "",
+                headers: {}
+            };
+            return requestConfig;
         }
-        renewToken(refreshToken) {
-            this._state = this.generateGuid();
-            return new Promise(function (resolve, reject) {
-            });
-        }
-        requestAuthorization(resourceId) {
-            this._state = this.generateGuid();
-            return new Promise(function (resolve, reject) {
-                var url = this.getAuthorizationRequestUrl(resourceId);
-                var config = {};
-                config.height = 100;
-                config.width = 100;
-                config.showDeveloperTools = true;
-                this._config.interactiveAuthorizationCommand.execute(url, config).then(function (result) {
-                    var token;
-                    resolve(token);
-                }).catch(function (err) {
-                    reject(err);
-                });
-            });
+        getTokenRequestConfig(config) {
+            var requestConfig = {
+                url: "",
+                headers: {}
+            };
+            return requestConfig;
         }
         getAuthorizationRequestUrl(resourceId) {
             var tenant = 'common';
@@ -292,6 +312,6 @@
         }
         ;
     }
-    exports.AADAuthorizationContext = AADAuthorizationContext;
+    exports.AADTokenBroker = AADTokenBroker;
 });
 //# sourceMappingURL=common.js.map
