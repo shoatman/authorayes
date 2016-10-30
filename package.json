@@ -2,10 +2,10 @@
   "name": "authorayes",
   "version": "1.0.0",
   "description": "Typescript Token Acquisition",
-  "main": "./src/authorayes.ts",
+  "main": "./src/authorayes.js",
+  "types": "./src/authorayes.d.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "postinstall": "typings install"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
@@ -21,10 +21,10 @@
   "author": "Shane Oatman",
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^2.0.6",
-    "typings": "^1.4.0"
+    "typescript": "^2.0.6"
   },
   "dependencies": {
+    "@types/bluebird": "^3.0.35",
     "bluebird": "^3.4.6"
   }
 }

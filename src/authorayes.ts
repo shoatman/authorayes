@@ -20,14 +20,6 @@ export interface interactiveAuthorizationConfig{
 	showDeveloperTools?: boolean;
 }
 
-export interface interactiveAuthorizationExecute{
-	(url:string, interactiveAuthorizationConfig:any): Promise<any>;
-}
-
-export interface interactiveAuthorizationExecute{
-	(url:string, interactiveAuthorizationConfig:any): Promise<any>;
-}
-
 export interface secureStorageGetPassword{
 	(service:string, account:string): string;
 }
@@ -52,7 +44,7 @@ export interface SecureStorage{
 }
 
 export abstract class interactiveAuthorizationCommand {
-	execute: interactiveAuthorizationExecute;
+	abstract execute(url:string, interactiveAuthorizationConfig:any): Promise<any>;
 }
 
 /*
@@ -61,7 +53,7 @@ NOTE: For future consideration... allowing the code redemption to happen server 
 - Basically support a satellizer like model in addition to the client side authorization code redemption.
 */
 export abstract class redeemAuthorizationCommand {
-	execute: interactiveAuthorizationExecute;
+	abstract execute(url:string, interactiveAuthorizationConfig:any): Promise<any>;
 }
 
 export interface TokenBrokerConfig {
