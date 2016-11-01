@@ -8,16 +8,17 @@ export enum InteractiveAuthorizationResultType {
 	NotAuthorized
 }
 
-export interface interativeAuthorizationResult{
+export interface InterativeAuthorizationResult{
 	result: InteractiveAuthorizationResultType;
 	hash: string;
 	details: string;
 }
 
-export interface interactiveAuthorizationConfig{
+export interface InteractiveAuthorizationConfig{
 	width?: number;
 	height?: number;
 	showDeveloperTools?: boolean;
+	expectedRedirectUri: string;
 }
 
 export interface secureStorageGetPassword{
@@ -43,8 +44,8 @@ export interface SecureStorage{
 	replacePassword: secureStorageReplacePassword;
 }
 
-export abstract class interactiveAuthorizationCommand {
-	abstract execute(url:string, interactiveAuthorizationConfig:any): Promise<any>;
+export abstract class InteractiveAuthorizationCommand {
+	abstract execute(url:string, config:InteractiveAuthorizationConfig): Promise<any>;
 }
 
 /*
@@ -53,13 +54,13 @@ NOTE: For future consideration... allowing the code redemption to happen server 
 - Basically support a satellizer like model in addition to the client side authorization code redemption.
 */
 export abstract class redeemAuthorizationCommand {
-	abstract execute(url:string, interactiveAuthorizationConfig:any): Promise<any>;
+	abstract execute(url:string, config:InteractiveAuthorizationConfig): Promise<any>;
 }
 
 export interface TokenBrokerConfig {
 	clientId:string;
 	redirectUri:string;
-	interactiveAuthorizationCommand: interactiveAuthorizationCommand;
+	interactiveAuthorizationCommand: InteractiveAuthorizationCommand;
 	appName:string;
 	storage?: Storage;
 	secureStorage?: SecureStorage;
@@ -331,12 +332,17 @@ export abstract class TokenBroker {
 
 		this._state = this.generateGuid();
 
+		var self: TokenBroker = this;
+		var config: InteractiveAuthorizationConfig = {
+			height: 100,
+			width: 100,
+			showDeveloperTools: true,
+			expectedRedirectUri: self._baseConfig.redirectUri
+		};
+
 		return new Promise(function(resolve, reject){
-			var url:string = this.getAuthorizationRequestUrl(resourceId);
-			var config: interactiveAuthorizationConfig = {}; 
-			config.height = 100;
-			config.width = 100;
-			config.showDeveloperTools = true;
+			var url:RequestConfig = self.getAuthorizationRequestConfig(resourceId);
+			
 			this._config.interactiveAuthorizationCommand.execute(url, config).then(function(result:any){
 				//Exchange Code For Token
 				var token:string;
