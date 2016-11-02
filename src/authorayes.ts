@@ -247,19 +247,19 @@ export abstract class TokenBroker {
 		return tokenType + "|" + resourceId;
 	}
 
-	private getTokenSecureStorage(storage:SecureStorage, service:string, account:string):string {
+	private getTokenSecureStorage(service:string, account:string):string {
 
-		if(storage){
-			return storage.getPassword(service, account);
+		if(this._baseConfig.secureStorage){
+			return this._baseConfig.secureStorage.getPassword(service, account);
 		}else{
 			return null;
 		}
 		
 	}
 
-	private setTokenSecureStorage(storage:SecureStorage, service:string, account:string, password:string){
-		if(storage){
-			storage.addPassword(service, account, password);
+	private setTokenSecureStorage(service:string, account:string, password:string){
+		if(this._baseConfig.secureStorage){
+			this._baseConfig.secureStorage.addPassword(service, account, password);
 		}
 	}
 
@@ -282,33 +282,35 @@ export abstract class TokenBroker {
 	}
 
 	getToken(parameters:TokenParameters):Promise<any>{
+		var self : TokenBroker = this;
+		var config: TokenBrokerConfig = self._baseConfig;
 		return new Promise(function(resolve, reject){
-			var tokenNames: ResourceAccountNames = this.getResourceStorageAccountNames(parameters.resourceId);
-			var accessToken:string = this.getTokenFromSecureStorage(this._config.appName, tokenNames.accessTokenAccount);
-			var token:DecodedToken = this.decodeJWT(accessToken);
+			var tokenNames: ResourceAccountNames = self.getResourceStorageAccountNames(parameters.resourceId);
+			var accessToken:string = self.getTokenSecureStorage(config.appName, tokenNames.accessTokenAccount);
 
 			if(accessToken){
-				if(this.isTokenExpiring(token)){
+				var token:DecodedToken = self.decodeJWT(accessToken);
+				if(self.isTokenExpiring(token)){
 					//Need to renew the access Token and/or interactively request authorization
-					var refreshToken:string = this.getTokenFromSecureStorage(this._config.appName, tokenNames.refreshTokenAccount);
+					var refreshToken:string = this.getTokenSecureStorage(config.secureStorage, config.appName, tokenNames.refreshTokenAccount);
 
 					if(refreshToken){
-						this.renewToken(refreshToken).then(function(result:string){
+						self.renewToken(refreshToken).then(function(result:string){
 							resolve(result);
 						}).catch(function(err:any){
 							//TODO: Log Error
 							//Need to interactively request authorization
-							this.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
-								this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
-								this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+							self.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
+								self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, result.accessToken);
+								self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
 								resolve(result.accessToken);
 							}).catch(function(err:any){reject(null);});
 						});
 					}else{
 						//Need to interactively request authorization
-						this.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
-							this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
-							this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+						self.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
+							self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, result.accessToken);
+							self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
 							resolve(result.accessToken);
 						}).catch(function(err:any){reject(null);});
 					}
@@ -319,11 +321,12 @@ export abstract class TokenBroker {
 				}
 			}else{
 				//Need to interactively request authorization
-				this.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
-					this.setTokenSecureStorage(this._config.appName, tokenNames.accessTokenAccount, result.accessToken);
-					this.setTokenSecureStorage(this._config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
+
+				self.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
+					self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, result.accessToken);
+					self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
 					resolve(result.accessToken);
-				}).catch(function(err:any){reject(null);});
+				}).catch(function(err:any){reject(err);});
 			}
 		});
 	}
@@ -341,9 +344,16 @@ export abstract class TokenBroker {
 		};
 
 		return new Promise(function(resolve, reject){
-			var url:RequestConfig = self.getAuthorizationRequestConfig(resourceId);
+
+			var requestConfigParams : RequestConfigParameters = {
+				tokenParameters: {
+					resourceId: resourceId
+				}
+			};
+			var requestConfig:RequestConfig = self.getAuthorizationRequestConfig(requestConfigParams);
 			
-			this._config.interactiveAuthorizationCommand.execute(url, config).then(function(result:any){
+			self._baseConfig.interactiveAuthorizationCommand.execute(requestConfig.url, config).then(function(result:any){
+				console.log(result);
 				//Exchange Code For Token
 				var token:string;
 				resolve(token);
