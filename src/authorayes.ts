@@ -130,6 +130,13 @@ export interface RequestConfigParameters {
 	refreshToken?:string
 }
 
+export interface AuthorizationResponse {
+	admin_consent?:boolean,
+	code:string,
+	session_state?:string,
+	state:string
+}
+
 export abstract class TokenBroker {
 
 	constructor(config:TokenBrokerConfig){
@@ -146,7 +153,7 @@ export abstract class TokenBroker {
 	protected abstract getAuthorizationRequestConfig(config:RequestConfigParameters): RequestConfig;
 	protected abstract getTokenRequestConfig(config:RequestConfigParameters):RequestConfig;
 	protected abstract getRefreshTokenRequestConfig(config:RequestConfigParameters):RequestConfig;
-
+	
 
 	private decodeJWT(jwt:string) : DecodedToken{
 		if (this.isEmpty(jwt)) {
@@ -248,13 +255,11 @@ export abstract class TokenBroker {
 	}
 
 	private getTokenSecureStorage(service:string, account:string):string {
-
 		if(this._baseConfig.secureStorage){
 			return this._baseConfig.secureStorage.getPassword(service, account);
 		}else{
 			return null;
 		}
-		
 	}
 
 	private setTokenSecureStorage(service:string, account:string, password:string){
@@ -351,9 +356,13 @@ export abstract class TokenBroker {
 				}
 			};
 			var requestConfig:RequestConfig = self.getAuthorizationRequestConfig(requestConfigParams);
+
+			console.log(requestConfig.url);
 			
 			self._baseConfig.interactiveAuthorizationCommand.execute(requestConfig.url, config).then(function(result:any){
 				console.log(result);
+				var authResponse:AuthorizationResponse = self.parseAuthorizationResponse(result);
+				self.validateAuthorizationResponse(authResponse);
 				//Exchange Code For Token
 				var token:string;
 				resolve(token);
@@ -362,6 +371,45 @@ export abstract class TokenBroker {
 			});
 		});
 	}
+
+	private validateAuthorizationResponse(authResponse:AuthorizationResponse){
+		if(this._state == authResponse.state)
+			return;
+		else
+			throw new Error("State mis-match in authorization response");
+
+	}
+
+	private parseAuthorizationResponse(urlResponse:string):AuthorizationResponse {
+    	
+		var params:any = this.parseQueryString(urlResponse);
+
+    	var response:AuthorizationResponse = {
+    		code: params["code"],
+    		state: params["state"]
+    	}
+
+    	return response;
+    }
+
+    private parseQueryString(url: string):any{
+    	var params: any = {};
+    	var queries:string[];
+    	var temp:string[];
+    	var i:number;
+
+    	var queryString:string = url.substring(url.indexOf('?') + 1);
+
+    	queries = queryString.split("&amp;");
+
+    	for (var i = queries.length - 1; i >= 0; i--) {
+    		temp = queries[i].split('=');
+    		params[temp[0]] = temp[1];
+    	}
+
+    	return params;
+
+    }
 
 	private renewToken(refreshToken:string):Promise<any> {
 
@@ -505,6 +553,8 @@ export class AADTokenBroker extends TokenBroker {
 
         return str.join('&');
     };
+
+
 
 
 }
