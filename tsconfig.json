@@ -5,7 +5,8 @@
         "removeComments": true,
         "preserveConstEnums": true,
         "sourceMap": true,
-        "declaration":true
+        "declaration":true,
+        "lib":["dom", "es6"]
     },
     "files": [
         "./src/authorayes.ts"

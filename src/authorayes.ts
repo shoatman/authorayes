@@ -1,5 +1,5 @@
 
-import * as Promise from 'bluebird';
+import 'whatwg-fetch';
 
 export enum InteractiveAuthorizationResultType {
 	Success = 1,
@@ -116,12 +116,16 @@ export const CONTSTANTS:any = {
 	ACCESS_TOKEN: 'access_token',
     EXPIRES_IN: 'expires_in',
     ID_TOKEN: 'id_token',
-    AUTHORIZATION_CODE: 'code'
+    AUTHORIZATION_CODE: 'code',
+    REFRESH_TOKEN:'referesh_token'
+
 }
 
 export interface RequestConfig {
 	url:string,
-	headers: any
+	headers: any,
+	body?:string,
+	baseUrl?:string
 }
 
 export interface RequestConfigParameters {
@@ -131,11 +135,36 @@ export interface RequestConfigParameters {
 }
 
 export interface AuthorizationResponse {
-	admin_consent?:boolean,
+	admin_consent?:boolean, //Crazy non-standard response for AAD Only... need to figure out correct model for these extras...
 	code:string,
-	session_state?:string,
-	state:string
+	session_state?:string, //Another extra for AAD Only...
+	state:string,
+	error?:string,
+	error_description?:string,
+	error_uri?:string
 }
+
+
+
+export interface TokenResponse{
+	access_token?:string,
+	token_type?:string,
+	expires_in?:number,
+	refresh_token?:string,
+	scope?:string,
+	error?:TokenRequestErrors,
+	error_description?:string,
+	error_uri?:string
+}
+
+
+
+export type TokenRequestErrors = "invalid_request" | "invalid_client" | "invalid_grant" | "unauthorized_client" | "unsupported_grant_type" | "invalid_scope"
+
+//These are the values supported by the spec... need to extend for specific IDPs
+export type AuthorizationRequestErrors = "unauthorized_client" | "access_denied" | "unsupported_response_type" | "invalid_scope" | "server_error" | "temporarily_unavailable"
+
+
 
 export abstract class TokenBroker {
 
@@ -287,8 +316,10 @@ export abstract class TokenBroker {
 	}
 
 	getToken(parameters:TokenParameters):Promise<any>{
+		
 		var self : TokenBroker = this;
-		var config: TokenBrokerConfig = self._baseConfig;
+		var config: TokenBrokerConfig = this._baseConfig;
+
 		return new Promise(function(resolve, reject){
 			var tokenNames: ResourceAccountNames = self.getResourceStorageAccountNames(parameters.resourceId);
 			var accessToken:string = self.getTokenSecureStorage(config.appName, tokenNames.accessTokenAccount);
@@ -297,27 +328,20 @@ export abstract class TokenBroker {
 				var token:DecodedToken = self.decodeJWT(accessToken);
 				if(self.isTokenExpiring(token)){
 					//Need to renew the access Token and/or interactively request authorization
-					var refreshToken:string = this.getTokenSecureStorage(config.secureStorage, config.appName, tokenNames.refreshTokenAccount);
+					console.log('access token is expiring...');
+					var refreshToken:string = self.getTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount);
 
 					if(refreshToken){
-						self.renewToken(refreshToken).then(function(result:string){
+						self.renewToken(parameters, refreshToken).then(function(result:string){
 							resolve(result);
 						}).catch(function(err:any){
 							//TODO: Log Error
 							//Need to interactively request authorization
-							self.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
-								self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, result.accessToken);
-								self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
-								resolve(result.accessToken);
-							}).catch(function(err:any){reject(null);});
+							self.requestAuthorization(parameters,tokenNames, resolve, reject);
 						});
 					}else{
 						//Need to interactively request authorization
-						self.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
-							self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, result.accessToken);
-							self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
-							resolve(result.accessToken);
-						}).catch(function(err:any){reject(null);});
+						self.requestAuthorization(parameters,tokenNames, resolve, reject);
 					}
 
 				}else{
@@ -326,17 +350,50 @@ export abstract class TokenBroker {
 				}
 			}else{
 				//Need to interactively request authorization
-
-				self.requestAuthorization(parameters.resourceId).then(function(result:AuthorizationResult){
-					self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, result.accessToken);
-					self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, result.refreshToken);
-					resolve(result.accessToken);
-				}).catch(function(err:any){reject(err);});
+				self.requestAuthorization(parameters,tokenNames, resolve, reject);
+				
 			}
 		});
 	}
 
-	private requestAuthorization(resourceId: string):Promise<any> {
+	private requestAuthorization(parameters:TokenParameters, tokenNames:ResourceAccountNames, resolve:any, reject:any) {
+
+		
+		var config: TokenBrokerConfig = this._baseConfig;
+		var self : TokenBroker = this;
+
+		this.requestInteractiveAuthorization(parameters.resourceId).then(function(result:AuthorizationResponse){
+			var requestConfigParams : RequestConfigParameters = {
+				tokenParameters: {
+					resourceId: parameters.resourceId
+				}
+			};
+			requestConfigParams.authorizationCode = result.code;
+			self.exchangeAuthorizationCodeForToken(requestConfigParams).then(function(result:any){
+				if(result.ok){
+					result.json().then(function(tokenResponse:TokenResponse){
+						//var tokenResponse: SuccessTokenResponse = json;
+						self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, tokenResponse.access_token);
+						self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, tokenResponse.refresh_token);
+						resolve(tokenResponse.access_token);
+					});
+				}else{
+					result.json().then(function(tokenResponse:TokenResponse){
+						//Deal with Error Response
+						reject(tokenResponse);
+					});
+				}
+
+			}).catch(function(err:any){
+				throw err;
+			})
+
+			
+		}).catch(function(err:any){reject(err);});
+
+	}
+
+	private requestInteractiveAuthorization(resourceId: string):Promise<any> {
 
 		this._state = this.generateGuid();
 
@@ -363,17 +420,32 @@ export abstract class TokenBroker {
 				console.log(result);
 				var authResponse:AuthorizationResponse = self.parseAuthorizationResponse(result);
 				self.validateAuthorizationResponse(authResponse);
-				//Exchange Code For Token
-				var token:string;
-				resolve(token);
+				resolve(authResponse);
 			}).catch(function(err:any){
 				reject(err);
 			});
 		});
 	}
 
+	private exchangeAuthorizationCodeForToken(config:RequestConfigParameters):Promise<any> {
+		var tokenRequestConfig: RequestConfig = this.getTokenRequestConfig(config);
+
+
+		return fetch(tokenRequestConfig.baseUrl, {
+			method:"POST",
+			headers:{
+				"Content-Type": "application/x-www-form-urlencoded"
+			},
+			body: tokenRequestConfig.body
+		});
+
+	}
+
 	private validateAuthorizationResponse(authResponse:AuthorizationResponse){
-		if(this._state == authResponse.state)
+		console.log(this._state);
+		console.log(authResponse.state);
+		if(this._state === authResponse.state)
+			//TODO: Add code to check for error value againsta known set...
 			return;
 		else
 			throw new Error("State mis-match in authorization response");
@@ -384,6 +456,7 @@ export abstract class TokenBroker {
     	
 		var params:any = this.parseQueryString(urlResponse);
 
+		console.log(params);
     	var response:AuthorizationResponse = {
     		code: params["code"],
     		state: params["state"]
@@ -400,7 +473,7 @@ export abstract class TokenBroker {
 
     	var queryString:string = url.substring(url.indexOf('?') + 1);
 
-    	queries = queryString.split("&amp;");
+    	queries = queryString.split('&');
 
     	for (var i = queries.length - 1; i >= 0; i--) {
     		temp = queries[i].split('=');
@@ -411,12 +484,25 @@ export abstract class TokenBroker {
 
     }
 
-	private renewToken(refreshToken:string):Promise<any> {
+	private renewToken(parameters:TokenParameters, refreshToken:string):Promise<any> {
 
 		this._state = this.generateGuid();
 
-		return new Promise(function(resolve, reject){
+		var requestConfigParams : RequestConfigParameters = {
+				tokenParameters: {
+					resourceId: parameters.resourceId
+				}
+			};
+			requestConfigParams.refreshToken = refreshToken;
 
+		var tokenRequestConfig: RequestConfig = this.getRefreshTokenRequestConfig(requestConfigParams);
+
+		return fetch(tokenRequestConfig.baseUrl, {
+			method:"POST",
+			headers:{
+				"Content-Type": "application/x-www-form-urlencoded"
+			},
+			body: tokenRequestConfig.body
 		});
 	}
 
@@ -497,6 +583,8 @@ export class AADTokenBroker extends TokenBroker {
 			url: "",
 			headers: {}
 		};
+		requestConfig.baseUrl = this.getTokenRequestBaseUrl(config.authorizationCode, config.tokenParameters.resourceId);
+		requestConfig.body = this.serializeRefreshTokenRequest("refresh_token", config.refreshToken, this._config, config.tokenParameters.resourceId);
 		return requestConfig;
 	}
 
@@ -505,7 +593,19 @@ export class AADTokenBroker extends TokenBroker {
 			url: "",
 			headers: {}
 		};
+		requestConfig.baseUrl = this.getTokenRequestBaseUrl(config.authorizationCode, config.tokenParameters.resourceId);
+		requestConfig.body = this.serializeTokenRequest("authorization_code", config.authorizationCode, this._config, config.tokenParameters.resourceId);
 		return requestConfig;
+	}
+
+	private getTokenRequestBaseUrl(code:string, resourceId:string):string{
+		var tenant = 'common';
+        if (this._config.tenantId) {
+            tenant = this._config.tenantId;
+        }
+
+        var urlNavigate = this._authority + tenant + '/oauth2/token';
+        return urlNavigate;
 	}
 
 	private getAuthorizationRequestUrl(resourceId:string):string{
@@ -516,12 +616,6 @@ export class AADTokenBroker extends TokenBroker {
 
         var urlNavigate = this._authority + tenant + '/oauth2/authorize' + this.serializeAuthRequest("code", this._config, resourceId);
         return urlNavigate;
-	}
-
-	private getTokenRequestUrl():string {
-		var url: string;
-
-		return url;
 	}
 
 	private serializeAuthRequest(responseType:string, obj:AADTokenBrokerConfig, resource:string) {
@@ -539,20 +633,41 @@ export class AADTokenBroker extends TokenBroker {
         return str.join('&');
     };
 
-    private serializeTokenRequest(responseType:string, obj:AADTokenBrokerConfig, resource:string) {
+    /*
+	Hmm... probably need to use different strategy for each flow type... need to think about design for that....
+    */
+    private serializeTokenRequest(grantType:string, code: string, obj:AADTokenBrokerConfig, resource:string) {
         var str:any = [];
         if (obj !== null) {
-            str.push('?response_type=' + responseType);
+            str.push('grant_type=' + grantType);
             str.push('client_id=' + encodeURIComponent(obj.clientId));
             if (resource) {
                 str.push('resource=' + encodeURIComponent(resource));
             }
             str.push('redirect_uri=' + encodeURIComponent(obj.redirectUri));
+            str.push('code=' + encodeURIComponent(code));
             str.push('state=' + encodeURIComponent(this._state));
         }
 
         return str.join('&');
     };
+
+    private serializeRefreshTokenRequest(grantType:string, refreshToken: string, obj:AADTokenBrokerConfig, resource:string) {
+        var str:any = [];
+        if (obj !== null) {
+            str.push('grant_type=' + grantType);
+            str.push('client_id=' + encodeURIComponent(obj.clientId));
+            if (resource) {
+                str.push('resource=' + encodeURIComponent(resource));
+            }
+            str.push('redirect_uri=' + encodeURIComponent(obj.redirectUri));
+            str.push('refresh_token=' + encodeURIComponent(refreshToken));
+            str.push('state=' + encodeURIComponent(this._state));
+        }
+
+        return str.join('&');
+    };
+
 
 
 
