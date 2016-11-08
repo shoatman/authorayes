@@ -299,11 +299,17 @@ export abstract class TokenBroker {
 
 	private isTokenExpiring(token: DecodedToken): boolean{
 		var expiresDateTimeUTC:number = token.claims.exp;
-		var now: number = 1000;//(new Date()).UTC;
+		var now: number = Date.now() / 1000;
 		var expiringWindow: number = 300; //5 minutes
 		var timeRemaining: number = (expiresDateTimeUTC - now);
 
-		return (timeRemaining > expiringWindow);
+		console.log(now);
+		console.log(expiresDateTimeUTC);
+		console.log(timeRemaining);
+		console.log(expiringWindow);
+
+
+		return (timeRemaining < expiringWindow);
 	}
 
 	private getResourceStorageAccountNames (resourceId:string):ResourceAccountNames{
@@ -332,8 +338,10 @@ export abstract class TokenBroker {
 					var refreshToken:string = self.getTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount);
 
 					if(refreshToken){
-						self.renewToken(parameters, refreshToken).then(function(result:string){
-							resolve(result);
+						self.renewToken(parameters, refreshToken).then(function(tokenResponse:TokenResponse){
+							self.setTokenSecureStorage(config.appName, tokenNames.accessTokenAccount, tokenResponse.access_token);
+							self.setTokenSecureStorage(config.appName, tokenNames.refreshTokenAccount, tokenResponse.refresh_token);
+							resolve(tokenResponse.access_token);
 						}).catch(function(err:any){
 							//TODO: Log Error
 							//Need to interactively request authorization
